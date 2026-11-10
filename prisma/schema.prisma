@@ -1,0 +1,335 @@
+// PlantGuard Prisma Schema
+// Database: PostgreSQL (Neon)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum HealthStatus {
+  EXCELLENT
+  GOOD
+  FAIR
+  POOR
+}
+
+enum TaskType {
+  WATER
+  FERTILIZE
+  PRUNE
+  REPOT
+  CHECK_HEALTH
+}
+
+enum Frequency {
+  DAILY
+  TWICE_WEEKLY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  AS_NEEDED
+}
+
+enum AuthProvider {
+  EMAIL
+  GOOGLE
+}
+
+enum SubscriptionPlan {
+  FREE
+  PRO
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model User {
+  user_id      String   @id @default(cuid())
+  email        String   @unique
+  password     String?
+  firstName    String
+  lastName     String
+  phoneNumber  String?
+  country      String?
+  city         String?
+  timezone     String   @default("UTC")
+  profileImage String?
+
+  authProvider AuthProvider     @default(EMAIL)
+  googleId     String?          @unique
+
+  subscription          SubscriptionPlan @default(FREE)
+  subscriptionStartDate DateTime?
+  subscriptionEndDate   DateTime?
+
+  // All-time counter
+  totalScans           Int     @default(0)
+
+  // Disease detection quota — Free: 15/week
+  diseaseScansThisWeek Int     @default(0)
+  diseaseScanWeekKey   String?
+
+  // Spread analysis quota — Free: 10/week
+  spreadScansThisWeek  Int     @default(0)
+  spreadScanWeekKey    String?
+
+  plants        Plant[]
+  scans         ScanHistory[]
+  spreadScans   SpreadScanHistory[]
+  careSchedules CareSchedule[]
+  chatSessions  ChatSession[]
+  payments      Payment[]
+  notifications Notification[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([email])
+  @@index([googleId])
+  @@index([deletedAt])
+}
+
+model Plant {
+  plant_id       String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [user_id], onDelete: Cascade)
+
+  name           String
+  scientificName String?
+  plantType      String
+  location       String?
+  imageUrl       String?
+  healthStatus   HealthStatus @default(GOOD)
+  notes          String?
+  lastWatered    DateTime?
+  lastFertilized DateTime?
+
+  scans         ScanHistory[]
+  careSchedules CareSchedule[]
+  spreadScans   SpreadScanHistory[]
+  notifications Notification[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([userId])
+  @@index([deletedAt])
+}
+
+model ScanHistory {
+  scan_id        String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [user_id], onDelete: Cascade)
+  plantId        String?
+  plant          Plant?   @relation(fields: [plantId], references: [plant_id], onDelete: SetNull)
+
+  imageUrl       String
+  diagnosis      String?
+  confidence     Float?
+  disease        String?
+  healthy        Boolean  @default(true)
+  recommendation String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([plantId])
+  @@index([createdAt])
+}
+
+model SpreadScanHistory {
+  spread_scan_id       String   @id @default(cuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [user_id], onDelete: Cascade)
+  plantId              String?
+  plant                Plant?   @relation(fields: [plantId], references: [plant_id], onDelete: SetNull)
+
+  imageUrls            String[]
+  diseaseName          String?
+  pathogenType         String?
+  spreadPercentage     Int?
+  confidence           Int?
+  severity             String?
+  affectedAreaEstimate String?
+  spreadRate           String?
+  diseaseStage         String?
+  plantPartAffected    String[]
+  visualSymptoms       String[]
+  riskToPlant          String?
+  analysis             String?  @db.Text
+  recommendations      String[]
+  requiresLabConfirm   Boolean  @default(false)
+  contagionRisk        String?
+  riskLabel            String?
+
+  valid          Boolean @default(true)
+  rejectReason   String?
+  imagesAnalyzed Int     @default(0)
+  modelUsed      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([plantId])
+  @@index([createdAt])
+}
+
+model CareSchedule {
+  care_schedule_id String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [user_id], onDelete: Cascade)
+  plantId          String
+  plant            Plant     @relation(fields: [plantId], references: [plant_id], onDelete: Cascade)
+
+  taskType      TaskType
+  frequency     Frequency
+  notes         String?
+  lastCompleted DateTime?
+  nextDue       DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([plantId, taskType])
+  @@index([userId])
+  @@index([plantId])
+  @@index([nextDue])
+}
+
+// ─── Chat ─────────────────────────────────────────────────────────────────────
+
+model ChatSession {
+  chat_session_id String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [user_id], onDelete: Cascade)
+
+  title   String  @default("New Chat")
+  model   String?
+
+  // Optional plant/scan context — set when chat is opened from a scan result
+  plantId  String? // loose reference — no FK so plant deletion does not cascade
+  scanId   String? // loose reference to ScanHistory.scan_id or SpreadScanHistory.spread_scan_id
+  scanType String? // "disease" | "spread"
+
+  messages ChatMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model ChatMessage {
+  chat_message_id String      @id @default(cuid())
+  sessionId       String
+  session         ChatSession @relation(fields: [sessionId], references: [chat_session_id], onDelete: Cascade)
+
+  role     String  // "user" | "assistant"
+  content  String  @db.Text
+  imageUrl String? // Cloudinary URL when user sends an image in chat
+
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
+}
+
+// ─── RAG — pgvector Knowledge Base ────────────────────────────────────────────
+//
+// Each KB entry is split into up to 3 focused chunks (symptoms / treatment /
+// prevention) before embedding.  Requires the pgvector extension:
+//
+//   CREATE EXTENSION IF NOT EXISTS vector;
+//
+// Run the migration in prisma/migrations/add_pgvector/migration.sql before
+// applying this schema, then run: npx prisma migrate deploy
+// or for an existing DB:  npx prisma db push
+//
+// After the schema change, run the one-time ingestion script:
+//   npx ts-node scripts/ingest-kb.ts
+
+model KbEmbedding {
+  id        Int      @id @default(autoincrement())
+  label     String   // classifier label, e.g. "Tomato___Early_blight"
+  chunkType String   // "symptoms" | "treatment" | "prevention" | "full"
+  chunkText String   @db.Text
+  // Prisma does not natively model vector columns — use raw SQL for reads/writes.
+  // The column is defined in the companion migration SQL.
+  // embedding  Unsupported("vector(768)")
+  createdAt DateTime @default(now())
+
+  @@index([label])
+}
+
+model Payment {
+  payment_id String @id @default(cuid())
+  userId     String
+  user       User   @relation(fields: [userId], references: [user_id], onDelete: Cascade)
+
+  amount       Float
+  currency     String           @default("USD")
+  plan         SubscriptionPlan
+  durationDays Int              @default(30)
+
+  status    PaymentStatus @default(PENDING)
+  reference String        @unique @default(cuid())
+
+  confirmedAt DateTime?
+  expiresAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([reference])
+}
+
+enum NotificationType {
+  TASK_REMINDER
+  OVERDUE_WATERING
+  OVERDUE_FERTILIZING
+  HEALTH_DECLINE
+  DISEASE_DETECTED
+  WEEKLY_REPORT
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+model Notification {
+  notification_id String @id @default(cuid())
+  userId          String
+  user            User   @relation(fields: [userId], references: [user_id], onDelete: Cascade)
+  plantId         String?
+  plant           Plant? @relation(fields: [plantId], references: [plant_id], onDelete: SetNull)
+
+  type    NotificationType
+  status  NotificationStatus @default(PENDING)
+  title   String
+  body    String             @db.Text
+  metadata Json?
+
+  sentAt    DateTime?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
