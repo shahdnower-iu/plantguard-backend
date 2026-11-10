@@ -8,5 +8,5 @@
    COPY . .
    RUN npm run build
    ENV NODE_ENV=production
-   EXPOSE 5000
+  EXPOSE 3001
    CMD ["npm", "start"]
