@@ -1,4 +1,4 @@
-# PlantGuard Backend v3
+# PlantGuard Backend 
 
 Plant disease detection API with persistent chat history, Cloudinary image uploads, and Groq AI.
 
